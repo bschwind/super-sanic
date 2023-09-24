@@ -1,14 +1,17 @@
 #![no_main]
 #![no_std]
 
+use crate::clocks::set_system_clock_exact;
+use fugit::RateExtU32;
 use panic_reset as _;
 use rp2040_hal::{
     gpio::{FunctionPio0, Pin},
+    pac,
     pio::PIOExt,
     Watchdog,
 };
 
-use rp2040_hal::pac;
+mod clocks;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -25,8 +28,10 @@ fn main() -> ! {
 
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
-    let _clocks = rp2040_hal::clocks::init_clocks_and_plls(
-        EXTERNAL_CRYSTAL_FREQUENCY_HZ,
+    // Start Clocks
+    let desired_system_clock = 132.MHz();
+    set_system_clock_exact(
+        desired_system_clock,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -34,7 +39,6 @@ fn main() -> ! {
         &mut pac.RESETS,
         &mut watchdog,
     )
-    .ok()
     .unwrap();
 
     let sio = rp2040_hal::Sio::new(pac.SIO);
@@ -45,8 +49,21 @@ fn main() -> ! {
     let led_pin: Pin<_, FunctionPio0, _> = pins.gpio25.into_function();
     let led_pin_id = led_pin.id().num;
 
-    let pio_program =
-        pio_proc::pio_asm!(".wrap_target", "set pins, 0 [31]", "set pins, 1 [31]", ".wrap",);
+    #[rustfmt::skip]
+    let pio_program = pio_proc::pio_asm!(
+        ".wrap_target",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 0 [31]",
+        "set pins, 1 [31]",
+        ".wrap",
+    );
 
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&pio_program.program).unwrap();

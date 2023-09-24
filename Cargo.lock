@@ -749,6 +749,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "embedded-hal",
+ "fugit",
  "panic-reset",
  "pio",
  "pio-proc",
