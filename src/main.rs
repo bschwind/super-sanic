@@ -42,34 +42,22 @@ fn main() -> ! {
     let pins =
         rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
 
-    // let mut led_pin = pins.gpio25.into_push_pull_output();
     let led_pin: Pin<_, FunctionPio0, _> = pins.gpio25.into_function();
     let led_pin_id = led_pin.id().num;
 
-    const MAX_DELAY: u8 = 31;
-    let mut a = pio::Assembler::<32>::new();
-    let mut wrap_target = a.label();
-    let mut wrap_source = a.label();
-    // Set pin as Out
-    a.set(pio::SetDestination::PINDIRS, 1);
-    // Define begin of program loop
-    a.bind(&mut wrap_target);
-    // Set pin low
-    a.set_with_delay(pio::SetDestination::PINS, 0, MAX_DELAY);
-    // Set pin high
-    a.set_with_delay(pio::SetDestination::PINS, 1, MAX_DELAY);
-    // Define end of program loop
-    a.bind(&mut wrap_source);
+    let pio_program =
+        pio_proc::pio_asm!(".wrap_target", "set pins, 0 [31]", "set pins, 1 [31]", ".wrap",);
 
-    let program = a.assemble_with_wrap(wrap_source, wrap_target);
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
-    let installed = pio.install(&program).unwrap();
+    let installed = pio.install(&pio_program.program).unwrap();
     let (int, frac) = (0, 0); // as slow as possible (0 is interpreted as 65536)
 
-    let (sm, _, _) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut sm, _, _) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .set_pins(led_pin_id, 1)
         .clock_divisor_fixed_point(int, frac)
         .build(sm0);
+
+    sm.set_pindirs([(led_pin_id, rp2040_hal::pio::PinDir::Output)]);
 
     sm.start();
 
