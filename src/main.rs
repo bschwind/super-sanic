@@ -52,16 +52,16 @@ fn main() -> ! {
     #[rustfmt::skip]
     let pio_program = pio_proc::pio_asm!(
         ".wrap_target",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 0 [31]",
-        "set pins, 1 [31]",
+        "    set pins, 0 [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    nop [31]",
+        "    set pins, 1 [31]",
         ".wrap",
     );
 
