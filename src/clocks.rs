@@ -5,9 +5,17 @@ use rp2040_hal::{
     Watchdog,
 };
 
-const XOSC_KHZ: u32 = 12_000;
+const CRYSTAL_FREQUENCY_KHZ: u32 = 12_000; // 12 MHz
+
+// Voltage-Controlled Oscillator constants.
 const PICO_PLL_VCO_MIN_FREQ_KHZ: u32 = 750_000; // 750 MHz
 const PICO_PLL_VCO_MAX_FREQ_KHZ: u32 = 1_600_000; // 1600 MHz
+
+const FEEDBACK_DIVIDER_MIN: u32 = 16;
+const FEEDBACK_DIVIDER_MAX: u32 = 320;
+
+const POST_DIVIDER_MIN: u32 = 1;
+const POST_DIVIDER_MAX: u32 = 7;
 
 pub fn set_system_clock_exact(
     system_frequency: HertzU32,
@@ -18,7 +26,7 @@ pub fn set_system_clock_exact(
     resets: &mut RESETS,
     watchdog: &mut Watchdog,
 ) -> Option<()> {
-    let (vco_freq, post_div1, post_div2) = check_sys_clock_khz(system_frequency).unwrap();
+    let (vco_freq, post_div1, post_div2) = check_sys_clock(system_frequency).unwrap();
 
     let xosc = rp2040_hal::xosc::setup_xosc_blocking(xosc_dev, EXTERNAL_CRYSTAL_FREQUENCY_HZ.Hz())
         .map_err(|_x| false)
@@ -54,27 +62,29 @@ pub fn set_system_clock_exact(
     Some(())
 }
 
-pub fn check_sys_clock_khz(desired_frequency: HertzU32) -> Option<(HertzU32, u8, u8)> {
+// TODO(bschwind) - It seems lower jitter can be achieved by optimizing for higher frequencies
+//                  and larger dividers.
+pub fn check_sys_clock(desired_frequency: HertzU32) -> Option<(HertzU32, u8, u8)> {
     let freq_khz = desired_frequency.to_kHz();
     let reference_divider = 1;
-    let reference_freq_khz: u32 = XOSC_KHZ / reference_divider;
+    let reference_freq_khz: u32 = CRYSTAL_FREQUENCY_KHZ / reference_divider;
 
-    for fbdiv in (16..=320).rev() {
-        let vco_khz = fbdiv * reference_freq_khz;
+    for feedback_divide in (FEEDBACK_DIVIDER_MIN..=FEEDBACK_DIVIDER_MAX).rev() {
+        let vco_khz = feedback_divide * reference_freq_khz;
 
         if !(PICO_PLL_VCO_MIN_FREQ_KHZ..=PICO_PLL_VCO_MAX_FREQ_KHZ).contains(&vco_khz) {
             continue;
         }
 
-        for post_div1 in (1..=7).rev() {
-            for postdiv_2 in (1..=post_div1).rev() {
-                let out = vco_khz / (post_div1 * postdiv_2);
+        for post_div1 in (POST_DIVIDER_MIN..=POST_DIVIDER_MAX).rev() {
+            for post_div_2 in (1..=post_div1).rev() {
+                let out = vco_khz / (post_div1 * post_div_2);
 
-                if out == freq_khz && (vco_khz % (post_div1 * postdiv_2)) == 0 {
+                if out == freq_khz && (vco_khz % (post_div1 * post_div_2)) == 0 {
                     return Some((
                         vco_khz.kHz(),
                         post_div1.try_into().unwrap(),
-                        postdiv_2.try_into().unwrap(),
+                        post_div_2.try_into().unwrap(),
                     ));
                 }
             }
