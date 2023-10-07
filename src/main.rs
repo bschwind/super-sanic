@@ -5,6 +5,7 @@ use crate::clocks::set_system_clock_exact;
 use fugit::RateExtU32;
 use panic_reset as _;
 use rp2040_hal::{
+    dma::DMAExt,
     gpio::{FunctionPio0, Pin},
     pac,
     pio::PIOExt,
@@ -21,6 +22,8 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const EXTERNAL_CRYSTAL_FREQUENCY_HZ: u32 = 12_000_000;
 
+static mut AUDIO_BUF: &mut [u32; 960] = &mut [0; 960];
+
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
@@ -29,7 +32,8 @@ fn main() -> ! {
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
     // Start Clocks
-    let desired_system_clock = 132.MHz();
+    // Found with: https://github.com/bschwind/rp2040-clock-calculator
+    let desired_system_clock = 61440000.Hz();
     set_system_clock_exact(
         desired_system_clock,
         pac.XOSC,
@@ -47,38 +51,102 @@ fn main() -> ! {
         rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
 
     let led_pin: Pin<_, FunctionPio0, _> = pins.gpio25.into_function();
+    let dout_pin: Pin<_, FunctionPio0, _> = pins.gpio6.into_function();
+    let bit_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio7.into_function();
+    let left_right_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio8.into_function();
+
     let led_pin_id = led_pin.id().num;
+    let dout_pin_id = dout_pin.id().num;
+    let left_right_clock_pin_id = left_right_clock_pin.id().num;
+    let bit_clock_pin_id = bit_clock_pin.id().num;
 
     #[rustfmt::skip]
     let pio_program = pio_proc::pio_asm!(
-        ".wrap_target",
-        "    set pins, 0 [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    nop [31]",
-        "    set pins, 1 [31]",
-        ".wrap",
+        ".side_set 2",
+        "public entry_point:",
+        "frameL:",
+        "    set x, 30     side 0b00", // First bit = Word Clock, Second bit = Bit Clock
+        "    pull noblock  side 0b01",
+        "dataL:",
+        "    out pins, 1   side 0b00",
+        "    jmp x-- dataL side 0b01",
+        "frameR:",
+        "    set x, 30     side 0b10",
+        "    pull noblock  side 0b11",
+        "dataR:",
+        "    out pins, 1   side 0b10",
+        "    jmp x-- dataR side 0b11",
     );
 
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&pio_program.program).unwrap();
-    let (int, frac) = (0, 0); // as slow as possible (0 is interpreted as 65536)
 
-    let (mut sm, _, _) = rp2040_hal::pio::PIOBuilder::from_program(installed)
-        .set_pins(led_pin_id, 1)
-        .clock_divisor_fixed_point(int, frac)
+    let (mut sm, _fifo_rx, mut fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+        .out_pins(dout_pin_id, 1)
+        .side_set_pin_base(bit_clock_pin_id)
+        .out_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
+        .clock_divisor_fixed_point(10, 0)
+        .buffers(rp2040_hal::pio::Buffers::OnlyTx)
         .build(sm0);
 
-    sm.set_pindirs([(led_pin_id, rp2040_hal::pio::PinDir::Output)]);
+    sm.set_pindirs([
+        (led_pin_id, rp2040_hal::pio::PinDir::Output),
+        (dout_pin_id, rp2040_hal::pio::PinDir::Output),
+        (left_right_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+        (bit_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+    ]);
+
+    let mut tone_generator = ToneGenerator::new(300, 48_000);
+
+    // Fill the buffer with data once
+    unsafe {
+        for frame in AUDIO_BUF.chunks_mut(2) {
+            let val = tone_generator.next() as u32;
+            frame[0] = val;
+            frame[1] = val;
+        }
+    }
+
+    let mut dma = pac.DMA.split(&mut pac.RESETS);
 
     sm.start();
 
     loop {
-        cortex_m::asm::wfi();
+        let mut transfer_config =
+            rp2040_hal::dma::single_buffer::Config::new(dma.ch0, unsafe { &*AUDIO_BUF }, fifo_tx);
+        transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
+
+        let transfer = transfer_config.start();
+
+        // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
+        // TODO - Use double-buffered DMA
+
+        let (ch0, _sent_buf, old_fifo_tx) = transfer.wait();
+        dma.ch0 = ch0;
+        fifo_tx = old_fifo_tx;
+    }
+}
+
+struct ToneGenerator {
+    delta: f64,
+    current: f64,
+}
+
+impl ToneGenerator {
+    pub fn new(frequency_hz: u32, sample_rate: u32) -> Self {
+        let delta = (frequency_hz as f64 * core::f64::consts::TAU) / sample_rate as f64;
+
+        Self { delta, current: 0.0 }
+    }
+
+    pub fn next(&mut self) -> i32 {
+        let val = libm::sin(self.current);
+        self.current += self.delta;
+
+        if self.current > core::f64::consts::TAU {
+            self.current -= core::f64::consts::TAU;
+        }
+
+        libm::floor(val * i32::MAX as f64) as i32
     }
 }
