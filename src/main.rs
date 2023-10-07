@@ -63,19 +63,16 @@ fn main() -> ! {
     #[rustfmt::skip]
     let pio_program = pio_proc::pio_asm!(
         ".side_set 2",
-        "public entry_point:",
-        "frameL:",
-        "    set x, 30     side 0b00", // First bit = Word Clock, Second bit = Bit Clock
-        "    pull noblock  side 0b01",
-        "dataL:",
-        "    out pins, 1   side 0b00",
-        "    jmp x-- dataL side 0b01",
-        "frameR:",
-        "    set x, 30     side 0b10",
-        "    pull noblock  side 0b11",
-        "dataR:",
-        "    out pins, 1   side 0b10",
-        "    jmp x-- dataR side 0b11",
+        "    set x, 30          side 0b01",
+        "left_data:",
+        "    out pins, 1        side 0b00",
+        "    jmp x-- left_data  side 0b01",
+        "    out pins 1         side 0b10",
+        "    set x, 30          side 0b11",
+        "right_data:",
+        "    out pins 1         side 0b10",
+        "    jmp x-- right_data side 0b11",
+        "    out pins 1         side 0b00",
     );
 
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
@@ -87,6 +84,8 @@ fn main() -> ! {
         .out_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
         .clock_divisor_fixed_point(10, 0)
         .buffers(rp2040_hal::pio::Buffers::OnlyTx)
+        .autopull(true)
+        .pull_threshold(32)
         .build(sm0);
 
     sm.set_pindirs([
