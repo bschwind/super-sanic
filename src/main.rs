@@ -115,7 +115,7 @@ fn main() -> ! {
 
 fn i2s_output_program() -> pio::Program<32> {
     let side_set_optional = false;
-    let side_set_pin_dir = true; // true == high?
+    let side_set_pin_dir = false; // false == output?
 
     let mut asm = pio::Assembler::<32>::new_with_side_set(pio::SideSet::new(
         side_set_optional,
@@ -123,13 +123,14 @@ fn i2s_output_program() -> pio::Program<32> {
         side_set_pin_dir,
     ));
 
-    // let mut wrap_source = asm.label();
-    // let mut wrap_target = asm.label();
+    let mut wrap_source = asm.label();
+    let mut wrap_target = asm.label();
     let mut left_label = asm.label();
     let mut right_label = asm.label();
 
+    asm.bind(&mut wrap_target);
     asm.bind(&mut left_label);
-    // asm.bind(&mut wrap_target);
+
     asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b00);
     asm.jmp_with_side_set(pio::JmpCondition::XDecNonZero, &mut left_label, 0b01);
     asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b10);
@@ -140,7 +141,7 @@ fn i2s_output_program() -> pio::Program<32> {
     asm.jmp_with_side_set(pio::JmpCondition::XDecNonZero, &mut right_label, 0b11);
     asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b00);
     asm.set_with_side_set(pio::SetDestination::X, 30, 0b01);
-    // asm.bind(&mut wrap_source);
+    asm.bind(&mut wrap_source);
 
     asm.assemble_program()
 }
