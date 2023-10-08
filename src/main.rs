@@ -60,24 +60,10 @@ fn main() -> ! {
     let left_right_clock_pin_id = left_right_clock_pin.id().num;
     let bit_clock_pin_id = bit_clock_pin.id().num;
 
-    #[rustfmt::skip]
-    let pio_program = pio_proc::pio_asm!(
-        ".side_set 2",
-        "bitloop1:",
-        "    out pins, 1       side 0b00", // First bit = Word Clock, Second bit = Bit Clock
-        "    jmp x-- bitloop1  side 0b01",
-        "    out pins, 1       side 0b10",
-        "    set x, 30         side 0b11",
-        "bitloop0:",
-        "    out pins, 1       side 0b10",
-        "    jmp x-- bitloop0  side 0b11",
-        "    out pins, 1       side 0b00",
-        "public entry_point:",
-        "    set x, 30         side 0b01",
-    );
+    let pio_program = i2s_output_program();
 
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
-    let installed = pio.install(&pio_program.program).unwrap();
+    let installed = pio.install(&pio_program).unwrap();
 
     let (mut sm, _fifo_rx, mut fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .out_pins(dout_pin_id, 1)
@@ -125,6 +111,38 @@ fn main() -> ! {
         dma.ch0 = ch0;
         fifo_tx = old_fifo_tx;
     }
+}
+
+fn i2s_output_program() -> pio::Program<32> {
+    let side_set_optional = false;
+    let side_set_pin_dir = true; // true == high?
+
+    let mut asm = pio::Assembler::<32>::new_with_side_set(pio::SideSet::new(
+        side_set_optional,
+        2,
+        side_set_pin_dir,
+    ));
+
+    // let mut wrap_source = asm.label();
+    // let mut wrap_target = asm.label();
+    let mut left_label = asm.label();
+    let mut right_label = asm.label();
+
+    asm.bind(&mut left_label);
+    // asm.bind(&mut wrap_target);
+    asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b00);
+    asm.jmp_with_side_set(pio::JmpCondition::XDecNonZero, &mut left_label, 0b01);
+    asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b10);
+    asm.set_with_side_set(pio::SetDestination::X, 30, 0b11);
+
+    asm.bind(&mut right_label);
+    asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b10);
+    asm.jmp_with_side_set(pio::JmpCondition::XDecNonZero, &mut right_label, 0b11);
+    asm.out_with_side_set(pio::OutDestination::PINS, 1, 0b00);
+    asm.set_with_side_set(pio::SetDestination::X, 30, 0b01);
+    // asm.bind(&mut wrap_source);
+
+    asm.assemble_program()
 }
 
 struct ToneGenerator {
