@@ -63,7 +63,7 @@ fn main() -> ! {
     #[rustfmt::skip]
     let pio_program = pio_proc::pio_asm!(
         ".side_set 2",
-        "    set x, 30          side 0b01",
+        "    set x, 30          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
         "left_data:",
         "    out pins, 1        side 0b00",
         "    jmp x-- left_data  side 0b01",
