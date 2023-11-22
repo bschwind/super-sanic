@@ -14,3 +14,4 @@ pio = "0.2"
 pio-proc = "0.2"
 rp2040-boot2 = "0.3"
 rp2040-hal = { version = "0.9", features = ["critical-section-impl"] }
+arrayvec = "0.7.4"
