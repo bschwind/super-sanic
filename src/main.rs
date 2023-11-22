@@ -69,6 +69,8 @@ fn main() -> ! {
     #[rustfmt::skip]
     let dac_pio_program = pio_proc::pio_asm!(
         ".side_set 2",
+        "    wait 1 irq 0       side 0b00",
+        ".wrap_target",
         "    set x, 30          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
         "left_data:",
         "    out pins, 1        side 0b00",
@@ -79,6 +81,7 @@ fn main() -> ! {
         "    out pins 1         side 0b10",
         "    jmp x-- right_data side 0b11",
         "    out pins 1         side 0b00",
+        ".wrap",
     );
 
     let installed = pio.install(&dac_pio_program.program).unwrap();
@@ -112,6 +115,8 @@ fn main() -> ! {
     #[rustfmt::skip]
     let mic_pio_program = pio_proc::pio_asm!(
         ".side_set 2",
+        "    wait 1 irq 0       side 0b00",
+        ".wrap_target",
         "    set x, 30          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
         "left_data:",
         "    in pins, 1         side 0b00",
@@ -122,6 +127,7 @@ fn main() -> ! {
         "    in pins 1          side 0b10",
         "    jmp x-- right_data side 0b11",
         "    in pins 1          side 0b00",
+        ".wrap",
     );
 
     // let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
@@ -159,7 +165,9 @@ fn main() -> ! {
 
     // dac_sm.start();
     let sm_group = dac_sm.with(mic_sm);
-    sm_group.start();
+    sm_group.sync().start();
+
+    pio.force_irq(1);
 
     loop {
         // let mut transfer_config =
