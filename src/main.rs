@@ -112,23 +112,23 @@ fn main() -> ! {
     #[rustfmt::skip]
     let mic_pio_program = pio_proc::pio_asm!(
         ".side_set 2",
-        "    set x, 30          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
+        "    set x, 30          side 0b00", // side 0bWB - W = Word Clock, B = Bit Clock
         "left_data:",
-        "    in pins, 1         side 0b00",
-        "    jmp x-- left_data  side 0b01",
-        "    in pins 1          side 0b10",
-        "    set x, 30          side 0b11",
+        "    in pins, 1         side 0b01",
+        "    jmp x-- left_data  side 0b00",
+        "    in pins 1          side 0b11",
+        "    set x, 30          side 0b10",
         "right_data:",
-        "    in pins 1          side 0b10",
-        "    jmp x-- right_data side 0b11",
-        "    in pins 1          side 0b00",
+        "    in pins 1          side 0b11",
+        "    jmp x-- right_data side 0b10",
+        "    in pins 1          side 0b01",
     );
 
     // let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&mic_pio_program.program).unwrap();
 
     let (mut mic_sm, mut fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
-        .in_pin_base(mic_bit_clock_pin_id)
+        .in_pin_base(mic_data_pin_id)
         .side_set_pin_base(mic_bit_clock_pin_id)
         .in_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
         .clock_divisor_fixed_point(10, 0)
@@ -155,29 +155,33 @@ fn main() -> ! {
     //     }
     // }
 
-    let mut dma = pac.DMA.split(&mut pac.RESETS);
+    // let mut dma = pac.DMA.split(&mut pac.RESETS);
 
     // dac_sm.start();
     let sm_group = dac_sm.with(mic_sm);
     sm_group.start();
 
     loop {
+        if let Some(val) = fifo_rx.read() {
+            fifo_tx.write(val);
+        }
+
         // let mut transfer_config =
         //     rp2040_hal::dma::single_buffer::Config::new(dma.ch0, unsafe { &*AUDIO_BUF }, fifo_tx);
 
-        let mut transfer_config =
-            rp2040_hal::dma::single_buffer::Config::new(dma.ch0, fifo_rx, fifo_tx);
-        transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
+        // let mut transfer_config =
+        //     rp2040_hal::dma::single_buffer::Config::new(dma.ch0, fifo_rx, fifo_tx);
+        // transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
 
-        let transfer = transfer_config.start();
+        // let transfer = transfer_config.start();
 
-        // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
-        // TODO - Use double-buffered DMA
+        // // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
+        // // TODO - Use double-buffered DMA
 
-        let (ch0, old_fifo_rx, old_fifo_tx) = transfer.wait();
-        dma.ch0 = ch0;
-        fifo_tx = old_fifo_tx;
-        fifo_rx = old_fifo_rx;
+        // let (ch0, old_fifo_rx, old_fifo_tx) = transfer.wait();
+        // dma.ch0 = ch0;
+        // fifo_tx = old_fifo_tx;
+        // fifo_rx = old_fifo_rx;
     }
 }
 
