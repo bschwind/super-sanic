@@ -155,33 +155,25 @@ fn main() -> ! {
     //     }
     // }
 
-    // let mut dma = pac.DMA.split(&mut pac.RESETS);
+    let mut dma = pac.DMA.split(&mut pac.RESETS);
 
-    // dac_sm.start();
     let sm_group = dac_sm.with(mic_sm);
     sm_group.start();
 
     loop {
-        if let Some(val) = fifo_rx.read() {
-            fifo_tx.write(val);
-        }
+        let mut transfer_config =
+            rp2040_hal::dma::single_buffer::Config::new(dma.ch0, fifo_rx, fifo_tx);
+        transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
 
-        // let mut transfer_config =
-        //     rp2040_hal::dma::single_buffer::Config::new(dma.ch0, unsafe { &*AUDIO_BUF }, fifo_tx);
+        let transfer = transfer_config.start();
 
-        // let mut transfer_config =
-        //     rp2040_hal::dma::single_buffer::Config::new(dma.ch0, fifo_rx, fifo_tx);
-        // transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
+        // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
+        // TODO - Use double-buffered DMA
 
-        // let transfer = transfer_config.start();
-
-        // // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
-        // // TODO - Use double-buffered DMA
-
-        // let (ch0, old_fifo_rx, old_fifo_tx) = transfer.wait();
-        // dma.ch0 = ch0;
-        // fifo_tx = old_fifo_tx;
-        // fifo_rx = old_fifo_rx;
+        let (ch0, old_fifo_rx, old_fifo_tx) = transfer.wait();
+        dma.ch0 = ch0;
+        fifo_tx = old_fifo_tx;
+        fifo_rx = old_fifo_rx;
     }
 }
 
