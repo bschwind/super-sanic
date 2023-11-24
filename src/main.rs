@@ -12,13 +12,11 @@ use rp2040_hal::{
     usb::UsbBus,
     Watchdog,
 };
-use usb_device::{
-    class_prelude::UsbBusAllocator,
-    prelude::{UsbDeviceBuilder, UsbVidPid},
-};
-use usbd_audio::{AudioClassBuilder, Format, StreamConfig, TerminalType};
+use usb_device::class_prelude::UsbBusAllocator;
 
+mod audio_device;
 mod clocks;
+mod microphone_array;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -126,7 +124,6 @@ fn main() -> ! {
         "    in pins 1          side 0b01",
     );
 
-    // let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&mic_pio_program.program).unwrap();
 
     let (mut mic_sm, mut fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
@@ -145,8 +142,7 @@ fn main() -> ! {
         (mic_bit_clock_pin_id, rp2040_hal::pio::PinDir::Output),
     ]);
 
-    let sm_group = dac_sm.with(mic_sm);
-    sm_group.start();
+    dac_sm.with(mic_sm).sync().start();
 
     let mut back_mic_buffer = SampleDelay::<u32, 4>::new();
     let mut buffer = ArrayVec::<u32, 2>::new();
@@ -162,21 +158,7 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-    let mut usb_audio = AudioClassBuilder::new()
-        .input(
-            StreamConfig::new_discrete(Format::S24le, 1, &[48000], TerminalType::InMicrophone)
-                .unwrap(),
-        )
-        .build(&usb_bus)
-        .unwrap();
-
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .max_packet_size_0(64)
-        .manufacturer("tonari")
-        .product("Audio port")
-        .serial_number("42")
-        .build();
-
+    let (mut usb_audio, mut usb_device) = audio_device::init(&usb_bus);
     loop {
         if let Some(val) = fifo_rx.read() {
             match buffer.len() {
@@ -206,7 +188,7 @@ fn main() -> ! {
             usb_audio_buffer_staging.clear();
         }
 
-        if usb_dev.poll(&mut [&mut usb_audio]) && usb_audio_buffer.is_full() {
+        if usb_device.poll(&mut [&mut usb_audio]) && usb_audio_buffer.is_full() {
             usb_audio.write(&usb_audio_buffer).ok();
             usb_audio_buffer.clear();
         };
