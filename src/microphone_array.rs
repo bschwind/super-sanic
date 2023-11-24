@@ -15,7 +15,8 @@ pub struct MicrophoneArray<'a, RxSm: ValidStateMachine, TxSm: ValidStateMachine>
     fifo_tx: Tx<TxSm>,
     usb_audio_buffers: [ArrayVec<u8, 288>; 2],
     /// 4 samples = 28mm separation at 48khz
-    sample_delay: SampleDelay<u32, 4>,
+    back_sample_delay: SampleDelay<u32, 3>,
+    front_sample_delay: SampleDelay<u32, 3>,
 }
 
 impl<'a, RxSm: ValidStateMachine, TxSm: ValidStateMachine> MicrophoneArray<'a, RxSm, TxSm> {
@@ -31,36 +32,38 @@ impl<'a, RxSm: ValidStateMachine, TxSm: ValidStateMachine> MicrophoneArray<'a, R
             fifo_rx,
             fifo_tx,
             usb_audio_buffers: [ArrayVec::from([0; 288]), ArrayVec::from([0; 288])],
-            sample_delay: SampleDelay::new(),
+            back_sample_delay: SampleDelay::new(),
+            front_sample_delay: SampleDelay::new(),
         }
     }
 
     pub fn run(&mut self) -> ! {
         let mut front_sample: Option<u32> = None;
+        let mut front_sample_delayed: Option<u32> = None;
         loop {
             if let Some(val) = self.fifo_rx.read() {
                 if let Some(front) = front_sample {
                     let back = val;
-                    let back_delayed = self.sample_delay.process(val);
+                    let back_delayed = self.back_sample_delay.process(val);
 
-                    let additive_channel = front + back;
-                    let differential_channel = front.wrapping_sub(back_delayed);
+                    let channel_a = front.wrapping_sub(back_delayed);
+                    let channel_b = back.wrapping_sub(front_sample_delayed.unwrap());
 
-                    self.fifo_tx.write(additive_channel);
-                    self.fifo_tx.write(differential_channel);
+                    self.fifo_tx.write(channel_a);
+                    self.fifo_tx.write(channel_b);
 
-                    (1..4).for_each(|i| {
-                        self.usb_audio_buffers[0].try_push(additive_channel.to_be_bytes()[i]).ok();
+                    channel_a.to_le_bytes().into_iter().skip(1).for_each(|b| {
+                        self.usb_audio_buffers[0].try_push(b).ok();
                     });
-                    (1..4).for_each(|i| {
-                        self.usb_audio_buffers[0]
-                            .try_push(differential_channel.to_be_bytes()[i])
-                            .ok();
+
+                    channel_b.to_le_bytes().into_iter().skip(1).for_each(|b| {
+                        self.usb_audio_buffers[0].try_push(b).ok();
                     });
 
                     front_sample = None;
                 } else {
                     front_sample = Some(val);
+                    front_sample_delayed = Some(self.front_sample_delay.process(val));
                 };
             }
 
