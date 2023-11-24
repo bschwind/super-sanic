@@ -9,8 +9,14 @@ use rp2040_hal::{
     gpio::{FunctionPio0, Pin},
     pac,
     pio::PIOExt,
+    usb::UsbBus,
     Watchdog,
 };
+use usb_device::{
+    class_prelude::UsbBusAllocator,
+    prelude::{UsbDeviceBuilder, UsbVidPid},
+};
+use usbd_audio::{AudioClassBuilder, Format, StreamConfig, TerminalType};
 
 mod clocks;
 
@@ -32,7 +38,7 @@ fn main() -> ! {
     // Start Clocks
     // Found with: https://github.com/bschwind/rp2040-clock-calculator
     let desired_system_clock = 61440000.Hz();
-    set_system_clock_exact(
+    let clocks = set_system_clock_exact(
         desired_system_clock,
         pac.XOSC,
         pac.CLOCKS,
@@ -145,11 +151,38 @@ fn main() -> ! {
     let mut back_mic_buffer = SampleDelay::<u32, 4>::new();
     let mut buffer = ArrayVec::<u32, 2>::new();
 
+    let mut usb_audio_buffer_staging = ArrayVec::<u8, 144>::new();
+    let mut usb_audio_buffer = ArrayVec::<u8, 144>::new();
+
+    let usb_bus = UsbBusAllocator::new(UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+
+    let mut usb_audio = AudioClassBuilder::new()
+        .input(
+            StreamConfig::new_discrete(Format::S24le, 1, &[48000], TerminalType::InMicrophone)
+                .unwrap(),
+        )
+        .build(&usb_bus)
+        .unwrap();
+
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+        .max_packet_size_0(64)
+        .manufacturer("tonari")
+        .product("Audio port")
+        .serial_number("42")
+        .build();
+
     loop {
         if let Some(val) = fifo_rx.read() {
             match buffer.len() {
                 0 => buffer.push(val),
-                1 => buffer.push(back_mic_buffer.process(val)),
+                // 1 => buffer.push(back_mic_buffer.process(val)),
+                1 => buffer.push(val),
                 _ => (),
             }
         }
@@ -157,10 +190,26 @@ fn main() -> ! {
         if buffer.len() == 2 {
             let front = buffer.pop().unwrap();
             let back = buffer.pop().unwrap();
-            let val = front.wrapping_sub(back);
+            let val = front + back;
+            // let val = front.wrapping_sub(back);
             fifo_tx.write(val);
             fifo_tx.write(val);
+
+            let sample = val.to_le_bytes();
+            usb_audio_buffer_staging.try_push(sample[1]).ok();
+            usb_audio_buffer_staging.try_push(sample[2]).ok();
+            usb_audio_buffer_staging.try_push(sample[3]).ok();
         }
+
+        if usb_audio_buffer_staging.is_full() {
+            usb_audio_buffer = usb_audio_buffer_staging.clone();
+            usb_audio_buffer_staging.clear();
+        }
+
+        if usb_dev.poll(&mut [&mut usb_audio]) && usb_audio_buffer.is_full() {
+            usb_audio.write(&usb_audio_buffer).ok();
+            usb_audio_buffer.clear();
+        };
     }
 }
 

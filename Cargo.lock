@@ -763,6 +763,8 @@ dependencies = [
  "pio-proc",
  "rp2040-boot2",
  "rp2040-hal",
+ "usb-device",
+ "usbd-audio",
 ]
 
 [[package]]
@@ -939,6 +941,15 @@ name = "usb-device"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f6cc3adc849b5292b4075fc0d5fdcf2f24866e88e336dd27a8943090a520508"
+
+[[package]]
+name = "usbd-audio"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac88667b47ea82e0cb19b7341d7c4cc7f21f68e5cd4382f090f84c25b4bebc7d"
+dependencies = [
+ "usb-device",
+]
 
 [[package]]
 name = "vcell"

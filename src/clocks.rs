@@ -1,6 +1,7 @@
 use crate::EXTERNAL_CRYSTAL_FREQUENCY_HZ;
 use fugit::{HertzU32, RateExtU32};
 use rp2040_hal::{
+    clocks::ClocksManager,
     pac::{CLOCKS, PLL_SYS, PLL_USB, RESETS, XOSC},
     Watchdog,
 };
@@ -25,7 +26,7 @@ pub fn set_system_clock_exact(
     pll_usb_dev: PLL_USB,
     resets: &mut RESETS,
     watchdog: &mut Watchdog,
-) -> Option<()> {
+) -> Option<ClocksManager> {
     let (vco_freq, post_div1, post_div2) = check_sys_clock(system_frequency).unwrap();
 
     let xosc = rp2040_hal::xosc::setup_xosc_blocking(xosc_dev, EXTERNAL_CRYSTAL_FREQUENCY_HZ.Hz())
@@ -59,7 +60,7 @@ pub fn set_system_clock_exact(
 
     clocks.init_default(&xosc, &pll_sys, &pll_usb).map_err(|_x| false).unwrap();
 
-    Some(())
+    Some(clocks)
 }
 
 // TODO(bschwind) - It seems lower jitter can be achieved by optimizing for higher frequencies
