@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-use crate::clocks::set_system_clock_exact;
+use crate::{clocks::set_system_clock_exact, microphone_array::MicrophoneArray};
 use arrayvec::ArrayVec;
 use fugit::RateExtU32;
 use panic_reset as _;
@@ -126,7 +126,7 @@ fn main() -> ! {
 
     let installed = pio.install(&mic_pio_program.program).unwrap();
 
-    let (mut mic_sm, mut fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut mic_sm, fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .in_pin_base(mic_data_pin_id)
         .side_set_pin_base(mic_bit_clock_pin_id)
         .in_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
@@ -144,12 +144,6 @@ fn main() -> ! {
 
     dac_sm.with(mic_sm).sync().start();
 
-    let mut back_mic_buffer = SampleDelay::<u32, 4>::new();
-    let mut buffer = ArrayVec::<u32, 2>::new();
-
-    let mut usb_audio_buffer_staging = ArrayVec::<u8, 144>::new();
-    let mut usb_audio_buffer = ArrayVec::<u8, 144>::new();
-
     let usb_bus = UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
@@ -158,41 +152,9 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-    let (mut usb_audio, mut usb_device) = audio_device::init(&usb_bus);
-    loop {
-        if let Some(val) = fifo_rx.read() {
-            match buffer.len() {
-                0 => buffer.push(val),
-                // 1 => buffer.push(back_mic_buffer.process(val)),
-                1 => buffer.push(val),
-                _ => (),
-            }
-        }
-
-        if buffer.len() == 2 {
-            let front = buffer.pop().unwrap();
-            let back = buffer.pop().unwrap();
-            let val = front + back;
-            // let val = front.wrapping_sub(back);
-            fifo_tx.write(val);
-            fifo_tx.write(val);
-
-            let sample = val.to_le_bytes();
-            usb_audio_buffer_staging.try_push(sample[1]).ok();
-            usb_audio_buffer_staging.try_push(sample[2]).ok();
-            usb_audio_buffer_staging.try_push(sample[3]).ok();
-        }
-
-        if usb_audio_buffer_staging.is_full() {
-            usb_audio_buffer = usb_audio_buffer_staging.clone();
-            usb_audio_buffer_staging.clear();
-        }
-
-        if usb_device.poll(&mut [&mut usb_audio]) && usb_audio_buffer.is_full() {
-            usb_audio.write(&usb_audio_buffer).ok();
-            usb_audio_buffer.clear();
-        };
-    }
+    let (usb_audio, usb_device) = audio_device::init(&usb_bus);
+    let mut microphone_array = MicrophoneArray::new(usb_device, usb_audio, fifo_rx, fifo_tx);
+    microphone_array.run();
 }
 
 struct SampleDelay<T, const N: usize> {
