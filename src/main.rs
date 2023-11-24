@@ -158,8 +158,8 @@ fn main() -> ! {
 
     // let mut dma = pac.DMA.split(&mut pac.RESETS);
 
-    // let sm_group = dac_sm.with(mic_sm);
-    // sm_group.start();
+    let sm_group = dac_sm.with(mic_sm);
+    sm_group.start();
 
     let mut buffer: ArrayVec<u32, 2> = ArrayVec::new();
 
@@ -169,7 +169,7 @@ fn main() -> ! {
         }
 
         if buffer.len() == 2 {
-            let val = buffer.pop() + buffer.pop();
+            let val = buffer.pop().unwrap() + buffer.pop().unwrap();
             fifo_tx.write(val);
             fifo_tx.write(val);
         }
