@@ -8,7 +8,7 @@ use usbd_audio::{AudioClass, AudioClassBuilder, Format, StreamConfig, TerminalTy
 pub fn init(usb_bus: &UsbBusAllocator<UsbBus>) -> (AudioClass<UsbBus>, UsbDevice<UsbBus>) {
     let usb_audio = AudioClassBuilder::new()
         .input(
-            StreamConfig::new_discrete(Format::S24le, 1, &[48000], TerminalType::InMicrophone)
+            StreamConfig::new_discrete(Format::S24le, 2, &[48000], TerminalType::InMicrophone)
                 .unwrap(),
         )
         .build(usb_bus)

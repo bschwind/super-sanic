@@ -2,7 +2,6 @@
 #![no_std]
 
 use crate::{clocks::set_system_clock_exact, microphone_array::MicrophoneArray};
-use arrayvec::ArrayVec;
 use fugit::RateExtU32;
 use panic_reset as _;
 use rp2040_hal::{
@@ -83,7 +82,7 @@ fn main() -> ! {
 
     let installed = pio.install(&dac_pio_program.program).unwrap();
 
-    let (mut dac_sm, _fifo_rx, mut fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut dac_sm, _fifo_rx, fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .out_pins(dac_dout_pin_id, 1)
         .side_set_pin_base(dac_bit_clock_pin_id)
         .out_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
@@ -155,23 +154,4 @@ fn main() -> ! {
     let (usb_audio, usb_device) = audio_device::init(&usb_bus);
     let mut microphone_array = MicrophoneArray::new(usb_device, usb_audio, fifo_rx, fifo_tx);
     microphone_array.run();
-}
-
-struct SampleDelay<T, const N: usize> {
-    buffer: ArrayVec<T, N>,
-    position: usize,
-}
-
-impl<T: Copy + Default, const N: usize> SampleDelay<T, N> {
-    pub fn new() -> Self {
-        Self { buffer: ArrayVec::from([T::default(); N]), position: 0 }
-    }
-
-    pub fn process(&mut self, input_sample: T) -> T {
-        let output_sample = self.buffer[self.position];
-        self.buffer[self.position] = input_sample;
-        self.position = (self.position + 1) % self.buffer.len();
-
-        output_sample
-    }
 }
