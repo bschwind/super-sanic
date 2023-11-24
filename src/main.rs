@@ -213,3 +213,22 @@ impl ToneGenerator {
         libm::floor(val * 0.5 * i32::MAX as f64) as i32
     }
 }
+
+struct SampleDelay<T, const N: usize> {
+    buffer: ArrayVec<T, N>,
+    position: usize,
+}
+
+impl<T: Copy, const N: usize> SampleDelay<T, N> {
+    pub fn new() -> Self {
+        Self { buffer: ArrayVec::new(), position: 0 }
+    }
+
+    pub fn process(&mut self, input_sample: T) -> T {
+        let output_sample = self.buffer[self.position];
+        self.buffer[self.position] = input_sample;
+        self.position = (self.position + 1) % self.buffer.len();
+
+        output_sample
+    }
+}
