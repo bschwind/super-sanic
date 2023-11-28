@@ -2,6 +2,7 @@
 #![no_std]
 
 use crate::clocks::set_system_clock_exact;
+use embedded_hal::digital::v2::OutputPin;
 use fugit::RateExtU32;
 use panic_reset as _;
 use rp2040_hal::{
@@ -48,7 +49,7 @@ fn main() -> ! {
     let pins =
         rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
 
-    // let led_pin: Pin<_, FunctionPio0, _> = pins.gpio25.into_function();
+    let mut led_pin = pins.gpio25.into_push_pull_output();
 
     // PIO Globals
     let (mut pio, sm0, sm1, _, _) = pac.PIO0.split(&mut pac.RESETS);
@@ -120,7 +121,6 @@ fn main() -> ! {
         "    in pins 1          side 0b01",
     );
 
-    // let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&mic_pio_program.program).unwrap();
 
     let (mut mic_sm, fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
@@ -150,6 +150,8 @@ fn main() -> ! {
     transfer_config.pace(rp2040_hal::dma::Pace::PreferSource);
 
     let _transfer = transfer_config.start();
+
+    led_pin.set_high().unwrap();
 
     loop {
         cortex_m::asm::wfi();
