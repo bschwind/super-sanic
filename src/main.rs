@@ -22,10 +22,6 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const EXTERNAL_CRYSTAL_FREQUENCY_HZ: u32 = 12_000_000;
 
-// For single-buffered DMA transfers, this only seems to work if it holds
-// enough data for 4 sine-wave periods.
-static mut AUDIO_BUF: &mut [u32; 9600] = &mut [0; 9600];
-
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
@@ -83,7 +79,7 @@ fn main() -> ! {
 
     let installed = pio.install(&dac_pio_program.program).unwrap();
 
-    let (mut dac_sm, _fifo_rx, mut fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut dac_sm, _fifo_rx, fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .out_pins(dac_dout_pin_id, 1)
         .side_set_pin_base(dac_bit_clock_pin_id)
         .out_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
@@ -127,7 +123,7 @@ fn main() -> ! {
     // let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&mic_pio_program.program).unwrap();
 
-    let (mut mic_sm, mut fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut mic_sm, fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .in_pin_base(mic_data_pin_id)
         .side_set_pin_base(mic_bit_clock_pin_id)
         .in_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
@@ -144,17 +140,6 @@ fn main() -> ! {
     ]);
     // End I2S input
 
-    // let mut tone_generator = ToneGenerator::new(300, 48_000);
-
-    // // Fill the buffer with data once
-    // unsafe {
-    //     for frame in AUDIO_BUF.chunks_mut(2) {
-    //         let val = tone_generator.next() as u32;
-    //         frame[0] = val;
-    //         frame[1] = val;
-    //     }
-    // }
-
     let dma = pac.DMA.split(&mut pac.RESETS);
 
     let sm_group = dac_sm.with(mic_sm);
@@ -168,29 +153,5 @@ fn main() -> ! {
 
     loop {
         cortex_m::asm::wfi();
-    }
-}
-
-struct ToneGenerator {
-    delta: f64,
-    current: f64,
-}
-
-impl ToneGenerator {
-    pub fn new(frequency_hz: u32, sample_rate: u32) -> Self {
-        let delta = (frequency_hz as f64 * core::f64::consts::TAU) / sample_rate as f64;
-
-        Self { delta, current: 0.0 }
-    }
-
-    pub fn next(&mut self) -> i32 {
-        let val = libm::sin(self.current);
-        self.current += self.delta;
-
-        if self.current > core::f64::consts::TAU {
-            self.current -= core::f64::consts::TAU;
-        }
-
-        libm::floor(val * 0.5 * i32::MAX as f64) as i32
     }
 }
