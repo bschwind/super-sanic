@@ -2,6 +2,7 @@
 #![no_std]
 
 use crate::clocks::set_system_clock_exact;
+use embedded_hal::digital::v2::OutputPin;
 use fugit::RateExtU32;
 use panic_reset as _;
 use rp2040_hal::{
@@ -21,8 +22,6 @@ mod clocks;
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 const EXTERNAL_CRYSTAL_FREQUENCY_HZ: u32 = 12_000_000;
-
-static mut AUDIO_BUF: &mut [u32; 960] = &mut [0; 960];
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -50,18 +49,22 @@ fn main() -> ! {
     let pins =
         rp2040_hal::gpio::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);
 
-    let led_pin: Pin<_, FunctionPio0, _> = pins.gpio25.into_function();
-    let dout_pin: Pin<_, FunctionPio0, _> = pins.gpio6.into_function();
-    let bit_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio7.into_function();
-    let left_right_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio8.into_function();
+    let mut led_pin = pins.gpio25.into_push_pull_output();
 
-    let led_pin_id = led_pin.id().num;
-    let dout_pin_id = dout_pin.id().num;
-    let left_right_clock_pin_id = left_right_clock_pin.id().num;
-    let bit_clock_pin_id = bit_clock_pin.id().num;
+    // PIO Globals
+    let (mut pio, sm0, sm1, _, _) = pac.PIO0.split(&mut pac.RESETS);
+
+    // I2S output
+    let dac_dout_pin: Pin<_, FunctionPio0, _> = pins.gpio6.into_function();
+    let dac_bit_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio7.into_function();
+    let dac_left_right_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio8.into_function();
+
+    let dac_dout_pin_id = dac_dout_pin.id().num;
+    let dac_bit_clock_pin_id = dac_bit_clock_pin.id().num;
+    let dac_left_right_clock_pin_id = dac_left_right_clock_pin.id().num;
 
     #[rustfmt::skip]
-    let pio_program = pio_proc::pio_asm!(
+    let dac_pio_program = pio_proc::pio_asm!(
         ".side_set 2",
         "    set x, 30          side 0b01", // side 0bWB - W = Word Clock, B = Bit Clock
         "left_data:",
@@ -75,12 +78,11 @@ fn main() -> ! {
         "    out pins 1         side 0b00",
     );
 
-    let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
-    let installed = pio.install(&pio_program.program).unwrap();
+    let installed = pio.install(&dac_pio_program.program).unwrap();
 
-    let (mut sm, _fifo_rx, mut fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
-        .out_pins(dout_pin_id, 1)
-        .side_set_pin_base(bit_clock_pin_id)
+    let (mut dac_sm, _fifo_rx, fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+        .out_pins(dac_dout_pin_id, 1)
+        .side_set_pin_base(dac_bit_clock_pin_id)
         .out_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
         .clock_divisor_fixed_point(10, 0)
         .buffers(rp2040_hal::pio::Buffers::OnlyTx)
@@ -88,64 +90,70 @@ fn main() -> ! {
         .pull_threshold(32)
         .build(sm0);
 
-    sm.set_pindirs([
-        (led_pin_id, rp2040_hal::pio::PinDir::Output),
-        (dout_pin_id, rp2040_hal::pio::PinDir::Output),
-        (left_right_clock_pin_id, rp2040_hal::pio::PinDir::Output),
-        (bit_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+    dac_sm.set_pindirs([
+        (dac_dout_pin_id, rp2040_hal::pio::PinDir::Output),
+        (dac_left_right_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+        (dac_bit_clock_pin_id, rp2040_hal::pio::PinDir::Output),
     ]);
+    // End I2S output
 
-    let mut tone_generator = ToneGenerator::new(300, 48_000);
+    // I2S Input
+    let mic_data_pin: Pin<_, FunctionPio0, _> = pins.gpio10.into_function();
+    let mic_bit_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio11.into_function();
+    let mic_left_right_clock_pin: Pin<_, FunctionPio0, _> = pins.gpio12.into_function();
 
-    // Fill the buffer with data once
-    unsafe {
-        for frame in AUDIO_BUF.chunks_mut(2) {
-            let val = tone_generator.next() as u32;
-            frame[0] = val;
-            frame[1] = val;
-        }
-    }
+    let mic_data_pin_id = mic_data_pin.id().num;
+    let mic_bit_clock_pin_id = mic_bit_clock_pin.id().num;
+    let mic_left_right_clock_pin_id = mic_left_right_clock_pin.id().num;
 
-    let mut dma = pac.DMA.split(&mut pac.RESETS);
+    #[rustfmt::skip]
+    let mic_pio_program = pio_proc::pio_asm!(
+        ".side_set 2",
+        "    set x, 30          side 0b00", // side 0bWB - W = Word Clock, B = Bit Clock
+        "left_data:",
+        "    in pins, 1         side 0b01",
+        "    jmp x-- left_data  side 0b00",
+        "    in pins 1          side 0b11",
+        "    set x, 30          side 0b10",
+        "right_data:",
+        "    in pins 1          side 0b11",
+        "    jmp x-- right_data side 0b10",
+        "    in pins 1          side 0b01",
+    );
 
-    sm.start();
+    let installed = pio.install(&mic_pio_program.program).unwrap();
+
+    let (mut mic_sm, fifo_rx, _fifo_tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+        .in_pin_base(mic_data_pin_id)
+        .side_set_pin_base(mic_bit_clock_pin_id)
+        .in_shift_direction(rp2040_hal::pio::ShiftDirection::Left)
+        .clock_divisor_fixed_point(10, 0)
+        .buffers(rp2040_hal::pio::Buffers::OnlyRx)
+        .autopush(true)
+        .push_threshold(32)
+        .build(sm1);
+
+    mic_sm.set_pindirs([
+        (mic_data_pin_id, rp2040_hal::pio::PinDir::Input),
+        (mic_left_right_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+        (mic_bit_clock_pin_id, rp2040_hal::pio::PinDir::Output),
+    ]);
+    // End I2S input
+
+    let dma = pac.DMA.split(&mut pac.RESETS);
+
+    let sm_group = dac_sm.with(mic_sm);
+    sm_group.start();
+
+    let mut transfer_config =
+        rp2040_hal::dma::single_buffer::Config::new(dma.ch0, fifo_rx, fifo_tx);
+    transfer_config.pace(rp2040_hal::dma::Pace::PreferSource);
+
+    let _transfer = transfer_config.start();
+
+    led_pin.set_high().unwrap();
 
     loop {
-        let mut transfer_config =
-            rp2040_hal::dma::single_buffer::Config::new(dma.ch0, unsafe { &*AUDIO_BUF }, fifo_tx);
-        transfer_config.pace(rp2040_hal::dma::Pace::PreferSink);
-
-        let transfer = transfer_config.start();
-
-        // Here is where we should fill the buffer with more data while the PIO is outputting audio data.
-        // TODO - Use double-buffered DMA
-
-        let (ch0, _sent_buf, old_fifo_tx) = transfer.wait();
-        dma.ch0 = ch0;
-        fifo_tx = old_fifo_tx;
-    }
-}
-
-struct ToneGenerator {
-    delta: f64,
-    current: f64,
-}
-
-impl ToneGenerator {
-    pub fn new(frequency_hz: u32, sample_rate: u32) -> Self {
-        let delta = (frequency_hz as f64 * core::f64::consts::TAU) / sample_rate as f64;
-
-        Self { delta, current: 0.0 }
-    }
-
-    pub fn next(&mut self) -> i32 {
-        let val = libm::sin(self.current);
-        self.current += self.delta;
-
-        if self.current > core::f64::consts::TAU {
-            self.current -= core::f64::consts::TAU;
-        }
-
-        libm::floor(val * i32::MAX as f64) as i32
+        cortex_m::asm::wfi();
     }
 }
